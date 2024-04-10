@@ -1,7 +1,7 @@
 
 # cmdln
 
-The **cmdln** library provides a simple command line interpreter. Commands with various parameters can be registered, and upon
+The **cmdln** C library provides a simple command line interpreter. Commands with various parameters can be registered, and upon
 successful parsing of a command with parameters, a callback function is invoked.
 
 ### Registration functions and parameter types
