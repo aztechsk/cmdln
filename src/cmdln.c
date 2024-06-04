@@ -1,7 +1,7 @@
 /*
  * cmdln.c
  *
- * Copyright (c) 2020 Jan Rusnak <jan@rusnak.sk>
+ * Copyright (c) 2024 Jan Rusnak <jan@rusnak.sk>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -207,28 +207,28 @@ void parse_line(char *line)
 		}
 	} while (TRUE);
 	switch (p_d->type) {
-	case COMMAND_NOARGS      :
+	case COMMAND_NOARGS :
 		parse_command_noargs(p_d);
 		break;
-	case COMMAND_BOOLEAN     :
+	case COMMAND_BOOLEAN :
 		parse_command_boolean(p_d);
 		break;
-	case COMMAND_CHAR        :
+	case COMMAND_CHAR :
 		parse_command_char(p_d);
 		break;
-	case COMMAND_INT         :
+	case COMMAND_INT :
 		parse_command_int(p_d);
 		break;
-	case COMMAND_CHAR_INT    :
+	case COMMAND_CHAR_INT :
 		parse_command_char_int(p_d);
 		break;
-	case COMMAND_STRING      :
+	case COMMAND_STRING :
 		parse_command_string(p_d);
 		break;
 	case COMMAND_CHAR_STRING :
 		parse_command_char_string(p_d);
 		break;
-	case COMMAND_INT_STRING  :
+	case COMMAND_INT_STRING :
 		parse_command_int_string(p_d);
 		break;
 	}
