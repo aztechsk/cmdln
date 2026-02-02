@@ -37,6 +37,8 @@
  #error "cmdln.c depends on tin.c"
 #endif
 
+const char *const cmd_accp = ">>\n";
+
 #define TOKENS_NUMB 3
 
 enum command_type {

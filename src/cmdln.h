@@ -25,6 +25,8 @@
 
 #if CMDLN_PARSER == 1
 
+extern const char *const cmd_accp;
+
 /**
  * add_command_noargs
  */
