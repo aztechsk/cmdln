@@ -1,7 +1,7 @@
 /*
  * cmdln.c
  *
- * Copyright (c) 2024 Jan Rusnak <jan@rusnak.sk>
+ * Copyright (c) 2026 Jan Rusnak <jan@rusnak.sk>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,10 +16,13 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <string.h>
+#include <ctype.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdlib.h>
 #include <FreeRTOS.h>
 #include <task.h>
-#include <semphr.h>
-#include <queue.h>
 #include <gentyp.h>
 #include "sysconf.h"
 #include "criterr.h"
@@ -27,14 +30,11 @@
 #include "msgconf.h"
 #include "fmalloc.h"
 #include "cmdln.h"
-#include <string.h>
-#include <stdio.h>
-#include <ctype.h>
 
 #if CMDLN_PARSER == 1
 
 #if TERMIN != 1
- #error "cmdln.c depends on tin.c"
+#error "cmdln.c depends on tin.c"
 #endif
 
 const char *const cmd_accp = ">>\n";
@@ -44,7 +44,7 @@ const char *const cmd_accp = ">>\n";
 enum command_type {
 	COMMAND_NOARGS,
 	COMMAND_BOOLEAN,
-        COMMAND_CHAR,
+	COMMAND_CHAR,
 	COMMAND_INT,
 	COMMAND_CHAR_INT,
 	COMMAND_STRING,
@@ -60,6 +60,7 @@ struct command_descriptor {
 };
 
 static struct command_descriptor *volatile descriptor_list;
+static struct command_descriptor *volatile descriptor_tail;
 static char *tokens[TOKENS_NUMB];
 static int tokens_count;
 static const char *const p_num_of_param_error = "bad number of parameters\n";
@@ -77,7 +78,8 @@ static void parse_command_char_int(struct command_descriptor *p_d);
 static void parse_command_string(struct command_descriptor *p_d);
 static void parse_command_char_string(struct command_descriptor *p_d);
 static void parse_command_int_string(struct command_descriptor *p_d);
-static boolean_t valid_number_string(const char *p);
+static char *parse_string(char *p);
+static boolean_t parse_int(const char *p, int *v);
 
 /**
  * add_command_noargs
@@ -150,10 +152,24 @@ static void add_command(enum command_type t, const char *p_n, void (*p_h)(void))
 {
 	struct command_descriptor *cd;
 
+	if (p_n == NULL || *p_n == '\0' || p_h == NULL) {
+		crit_err_exit(BAD_PARAMETER);
+	}
+	if (strchr(p_n, ' ') != NULL || strlen(p_n) > TERMIN_MAX_ROW_LENGTH) {
+		crit_err_exit(BAD_PARAMETER);
+	}
+	/*
+	 * Concurrent registration of the same command name is a programming error.
+	 */
+	for (cd = descriptor_list; cd; cd = cd->next) {
+		if (strcmp(cd->p_name, p_n) == 0) {
+			crit_err_exit(UNEXP_PROG_STATE);
+		}
+	}
 	cd = create_command_descriptor();
 	cd->type = t;
 	cd->p_handler = p_h;
-        barrier();
+	barrier();
 	cd->p_name = p_n;
 }
 
@@ -162,23 +178,21 @@ static void add_command(enum command_type t, const char *p_n, void (*p_h)(void))
  */
 static struct command_descriptor *create_command_descriptor(void)
 {
-	struct command_descriptor *p_n, *p_d;
+	struct command_descriptor *p_n;
 
-	if (NULL == (p_n = pvPortMalloc(sizeof(struct command_descriptor)))) {
+	p_n = pvPortMalloc(sizeof(struct command_descriptor));
+	if (p_n == NULL) {
 		crit_err_exit(MALLOC_ERROR);
 	}
-        memset(p_n, 0, sizeof(struct command_descriptor));
 	p_n->p_name = estr;
+	p_n->next = NULL;
 	taskENTER_CRITICAL();
-	if (descriptor_list) {
-		p_d = descriptor_list;
-		while (p_d->next) {
-			p_d = p_d->next;
-		}
-		p_d->next = p_n;
+	if (descriptor_tail) {
+		descriptor_tail->next = p_n;
 	} else {
 		descriptor_list = p_n;
 	}
+	descriptor_tail = p_n;
 	taskEXIT_CRITICAL();
 	return (p_n);
 }
@@ -190,15 +204,19 @@ void parse_line(char *line)
 {
 	struct command_descriptor *p_d;
 
+	if (line == NULL) {
+		crit_err_exit(BAD_PARAMETER);
+	}
 	if (!descriptor_list) {
 		return;
 	}
-	if (!(tokens_count = find_tokens(line))) {
+	tokens_count = find_tokens(line);
+	if (!tokens_count) {
 		return;
 	}
 	p_d = descriptor_list;
 	do {
-		if (0 == strcmp(tokens[0], p_d->p_name)) {
+		if (strcmp(tokens[0], p_d->p_name) == 0) {
 			break;
 		}
 		if (p_d->next) {
@@ -243,16 +261,16 @@ void cmdln_hlp(void)
 {
 	struct command_descriptor *p_d;
 	int i = 0;
-        UBaseType_t pr;
+	UBaseType_t pr;
 	boolean_t nl = TRUE;
 
-        msg(INF, ">>\n");
+	msg(INF, ">>\n");
 	if (descriptor_list) {
 		p_d = descriptor_list;
 		pr = uxTaskPriorityGet(NULL);
-                vTaskPrioritySet(NULL, TASK_PRIO_HIGH);
+		vTaskPrioritySet(NULL, TASK_PRIO_HIGH);
 		do {
-			if (0 != strcmp(estr, p_d->p_name)) {
+			if (strcmp(estr, p_d->p_name) != 0) {
 				if (!i) {
 					msg(INF, "cmd> %s", p_d->p_name);
 				} else {
@@ -271,7 +289,7 @@ void cmdln_hlp(void)
 		if (!nl) {
 			msg(INF, "\n");
 		}
-                vTaskPrioritySet(NULL, pr);
+		vTaskPrioritySet(NULL, pr);
 	}
 }
 
@@ -288,6 +306,8 @@ static int find_tokens(char *line)
 	}
 	t = 0;
 	spc_mode = TRUE;
+	dlm_mode = FALSE;
+	dlm_pos = 0;
 	for (i = 0; i < TERMIN_MAX_ROW_LENGTH + 1; i++) {
 		if (*(line + i) == '\0') {
 			break;
@@ -327,6 +347,9 @@ static int find_tokens(char *line)
 			}
 		}
 	}
+	if (i > TERMIN_MAX_ROW_LENGTH) {
+		return (0);
+	}
 	return (t);
 }
 
@@ -350,17 +373,17 @@ static void parse_command_boolean(struct command_descriptor *p_d)
 	boolean_t b;
 
 	if (tokens_count == 2) {
-		if (0 == strcmp(tokens[1], "0")) {
+		if (strcmp(tokens[1], "0") == 0) {
 			b = FALSE;
-		} else if (0 == strcmp(tokens[1], "off")) {
+		} else if (strcmp(tokens[1], "off") == 0) {
 			b = FALSE;
-		} else if (0 == strcmp(tokens[1], "false")) {
+		} else if (strcmp(tokens[1], "false") == 0) {
 			b = FALSE;
-		} else if (0 == strcmp(tokens[1], "1")) {
+		} else if (strcmp(tokens[1], "1") == 0) {
 			b = TRUE;
-		} else if (0 == strcmp(tokens[1], "on")) {
+		} else if (strcmp(tokens[1], "on") == 0) {
 			b = TRUE;
-		} else if (0 == strcmp(tokens[1], "true")) {
+		} else if (strcmp(tokens[1], "true") == 0) {
 			b = TRUE;
 		} else {
 			msg(INF, p_parse_param_n_error, 1);
@@ -378,7 +401,7 @@ static void parse_command_boolean(struct command_descriptor *p_d)
 static void parse_command_char(struct command_descriptor *p_d)
 {
 	if (tokens_count == 2) {
-		if (1 != strlen(tokens[1]) || !isalpha(*tokens[1])) {
+		if (strlen(tokens[1]) != 1 || !isalpha((unsigned char) *tokens[1])) {
 			msg(INF, p_parse_param_n_error, 1);
 			return;
 		}
@@ -396,11 +419,7 @@ static void parse_command_int(struct command_descriptor *p_d)
 	int n;
 
 	if (tokens_count == 2) {
-		if (!valid_number_string(tokens[1])) {
-			msg(INF, p_parse_param_n_error, 1);
-			return;
-		}
-		if (1 != sscanf(tokens[1], "%d", &n)) {
+		if (!parse_int(tokens[1], &n)) {
 			msg(INF, p_parse_param_n_error, 1);
 			return;
 		}
@@ -418,15 +437,11 @@ static void parse_command_char_int(struct command_descriptor *p_d)
 	int n;
 
 	if (tokens_count == 3) {
-		if (1 != strlen(tokens[1]) || !isalpha(*tokens[1])) {
+		if (strlen(tokens[1]) != 1 || !isalpha((unsigned char) *tokens[1])) {
 			msg(INF, p_parse_param_n_error, 1);
 			return;
 		}
-		if (!valid_number_string(tokens[2])) {
-			msg(INF, p_parse_param_n_error, 2);
-			return;
-		}
-		if (1 != sscanf(tokens[2], "%d", &n)) {
+		if (!parse_int(tokens[2], &n)) {
 			msg(INF, p_parse_param_n_error, 2);
 			return;
 		}
@@ -441,23 +456,15 @@ static void parse_command_char_int(struct command_descriptor *p_d)
  */
 static void parse_command_string(struct command_descriptor *p_d)
 {
-	int sz;
+	char *p;
 
 	if (tokens_count == 2) {
-		if ((sz = strlen(tokens[1])) < 2) {
+		p = parse_string(tokens[1]);
+		if (p == NULL) {
 			msg(INF, p_parse_param_n_error, 1);
 			return;
 		}
-		if (*tokens[1] != CMDLN_STRING_DELIMITER) {
-			msg(INF, p_parse_param_n_error, 1);
-			return;
-		}
-		if (*(tokens[1] + sz - 1) != CMDLN_STRING_DELIMITER) {
-			msg(INF, p_parse_param_n_error, 1);
-			return;
-		}
-		*(tokens[1] + sz - 1) = '\0';
-		((void (*)(const char *)) p_d->p_handler)(tokens[1] + 1);
+		((void (*)(const char *)) p_d->p_handler)(p);
 	} else {
 		msg(INF, p_num_of_param_error);
 	}
@@ -468,27 +475,19 @@ static void parse_command_string(struct command_descriptor *p_d)
  */
 static void parse_command_char_string(struct command_descriptor *p_d)
 {
-	int sz;
+	char *p;
 
 	if (tokens_count == 3) {
-		if (1 != strlen(tokens[1]) || !isalpha(*tokens[1])) {
+		if (strlen(tokens[1]) != 1 || !isalpha((unsigned char) *tokens[1])) {
 			msg(INF, p_parse_param_n_error, 1);
 			return;
 		}
-		if ((sz = strlen(tokens[2])) < 2) {
+		p = parse_string(tokens[2]);
+		if (p == NULL) {
 			msg(INF, p_parse_param_n_error, 2);
 			return;
 		}
-		if (*tokens[2] != CMDLN_STRING_DELIMITER) {
-			msg(INF, p_parse_param_n_error, 2);
-			return;
-		}
-		if (*(tokens[2] + sz - 1) != CMDLN_STRING_DELIMITER) {
-			msg(INF, p_parse_param_n_error, 2);
-			return;
-		}
-		*(tokens[2] + sz - 1) = '\0';
-		((void (*)(char, const char *)) p_d->p_handler)(*tokens[1], tokens[2] + 1);
+		((void (*)(char, const char *)) p_d->p_handler)(*tokens[1], p);
 	} else {
 		msg(INF, p_num_of_param_error);
 	}
@@ -499,56 +498,61 @@ static void parse_command_char_string(struct command_descriptor *p_d)
  */
 static void parse_command_int_string(struct command_descriptor *p_d)
 {
-	int sz, n;
+	char *p;
+	int n;
 
 	if (tokens_count == 3) {
-		if (!valid_number_string(tokens[1])) {
+		if (!parse_int(tokens[1], &n)) {
 			msg(INF, p_parse_param_n_error, 1);
 			return;
 		}
-		if (1 != sscanf(tokens[1], "%d", &n)) {
-			msg(INF, p_parse_param_n_error, 1);
-			return;
-		}
-		if ((sz = strlen(tokens[2])) < 2) {
+		p = parse_string(tokens[2]);
+		if (p == NULL) {
 			msg(INF, p_parse_param_n_error, 2);
 			return;
 		}
-		if (*tokens[2] != CMDLN_STRING_DELIMITER) {
-			msg(INF, p_parse_param_n_error, 2);
-			return;
-		}
-		if (*(tokens[2] + sz - 1) != CMDLN_STRING_DELIMITER) {
-			msg(INF, p_parse_param_n_error, 2);
-			return;
-		}
-		*(tokens[2] + sz - 1) = '\0';
-		((void (*)(int, const char *)) p_d->p_handler)(n, tokens[2] + 1);
+		((void (*)(int, const char *)) p_d->p_handler)(n, p);
 	} else {
 		msg(INF, p_num_of_param_error);
 	}
 }
 
 /**
- * valid_number_string
+ * parse_string
  */
-static boolean_t valid_number_string(const char *p)
+static char *parse_string(char *p)
 {
-	int i = 0;
+	size_t sz;
 
-	while (TRUE) {
-		if (*(p + i) == '\0') {
-			break;
-		}
-		if (i == 0 && (*p == '+' || *p == '-')) {
-			i++;
-			continue;
-		}
-		if (!isdigit(*(p + i))) {
-			return (FALSE);
-		}
-		i++;
+	if (*p != CMDLN_STRING_DELIMITER) {
+		return (p);
 	}
+	sz = strlen(p);
+	if (sz < 2 || *(p + sz - 1) != CMDLN_STRING_DELIMITER) {
+		return (NULL);
+	}
+	*(p + sz - 1) = '\0';
+	return (p + 1);
+}
+
+/**
+ * parse_int
+ */
+static boolean_t parse_int(const char *p, int *v)
+{
+	char *end;
+	long long n;
+
+	if (p == NULL || v == NULL || *p == '\0' || isspace((unsigned char) *p)) {
+		return (FALSE);
+	}
+	errno = 0;
+	n = strtoll(p, &end, 10);
+	if (errno == ERANGE || end == p || *end != '\0' || n < INT_MIN || n > INT_MAX) {
+		return (FALSE);
+	}
+	*v = (int) n;
 	return (TRUE);
 }
+
 #endif
