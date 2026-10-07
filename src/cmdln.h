@@ -70,7 +70,7 @@
  */
 
 #ifndef CMDLN_PARSER
-#define CMDLN_PARSER 0
+#error "CMDLN_PARSER not defined; include sysconf.h before cmdln.h"
 #endif
 
 #if CMDLN_PARSER == 1
