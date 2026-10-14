@@ -17,16 +17,17 @@ to the matching application handler.
 - Runtime command list via `cmdln_hlp()`
 - Integration with the framework terminal input (`tin`) module
 
-## Integration
+## Configuration and Integration
 
-The project configuration must be included before `cmdln.h`:
+The module integrates with the AZTech framework and FreeRTOS. The project
+configuration must be included before `cmdln.h`:
 
 ```c
 #include "sysconf.h"
 #include "cmdln.h"
 ```
 
-The framework terminal input (`tin`) module must also be enabled (`TERMIN == 1`).
+The framework terminal input (`tin`) module must be enabled (`TERMIN == 1`).
 `CMDLN_PARSER` must be defined by the project configuration and set to `1` to
 enable the API. The module uses `TERMIN_MAX_ROW_LENGTH` as the maximum accepted
 command-line length and `CMDLN_STRING_DELIMITER` as the string delimiter.
@@ -39,6 +40,18 @@ init_tin(uart_rx_byte, uart_dev, parse_line);
 
 Commands may be registered from task context during application initialization.
 Registration is also supported from task context while parsing is active.
+
+## Build
+
+The repository includes a CrossWorks for ARM project (`cmdln.hzp`) for
+integration into an AZTech firmware workspace. Alternatively, `src/cmdln.c`
+can be compiled as part of the application's existing build system.
+
+The build must provide the FreeRTOS and AZTech framework headers, the project
+`sysconf.h`, and the framework terminal input and logging facilities. Command
+parsing is enabled through `CMDLN_PARSER == 1` and requires `TERMIN == 1`.
+The module is intended to be linked into the firmware application; it does not
+provide a standalone command-line executable or terminal transport driver.
 
 ## Command Registration API
 
